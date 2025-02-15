@@ -1,0 +1,36 @@
+name: Release Binary
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+jobs:
+  release:
+    name: Build & Release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: 1.22
+
+      - name: Build Binary
+        run: |
+          GOOS=linux GOARCH=amd64 go build -o host-reporter-linux-amd64
+          GOOS=darwin GOARCH=amd64 go build -o host-reporter-mac-amd64
+          GOOS=windows GOARCH=amd64 go build -o host-reporter.exe
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v4
+        with:
+          files: |
+            host-reporter-linux-amd64
+            host-reporter-mac-amd64
+            host-reporter.exe
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
