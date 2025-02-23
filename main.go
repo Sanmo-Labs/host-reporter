@@ -209,8 +209,12 @@ func main() {
 	var err error
 
 	conn, err = vsock.Dial(vsockCID, vsockPort, nil)
-	if err != nil {
-		log.Fatalf("Error connecting to vsock: %v", err)
+	for err != nil {
+		log.Printf("error connecting to vsock: %v. Retrying...\n", err)
+
+		time.Sleep(5 * time.Second)
+
+		conn, err = vsock.Dial(vsockCID, vsockPort, nil)
 	}
 
 	defer func() {
