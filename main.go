@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/mdlayher/vsock"
 	"github.com/shirou/gopsutil/cpu"
 	"github.com/shirou/gopsutil/disk"
 	"github.com/shirou/gopsutil/mem"
@@ -52,7 +53,7 @@ func round(value float64) float64 {
 func (m *Monitor) fetchInstanceID() {
 	data, err := os.ReadFile("/var/lib/cloud/data/instance-id")
 	if err != nil {
-		os.Exit(1)
+		log.Fatalf("Error reading instance ID: %v", err)
 	}
 
 	m.InstanceID = strings.TrimSpace(string(data))
@@ -114,13 +115,31 @@ func (m *Monitor) updateNetwork(prevBytesSent, prevBytesReceived uint64, elapsed
 	return prevBytesSent, prevBytesReceived
 }
 
-func (m *Monitor) Update(interval time.Duration) {
+func (m *Monitor) sendMetrics(conn *vsock.Conn) error {
+	metricsJSON, err := json.Marshal(m)
+	if err != nil {
+		return err
+	}
+
+	_, err = conn.Write(metricsJSON)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (m *Monitor) Update(interval time.Duration, vsockCID uint32, vsockPort uint32) {
 	m.fetchInstanceID()
 
 	var prevBytesSent, prevBytesReceived uint64
 	startTime := time.Now()
 
-	encoder := json.NewEncoder(os.Stdout)
+	conn, err := vsock.Dial(vsockCID, vsockPort, nil)
+	if err != nil {
+		log.Fatalf("Error connecting to vsock: %v", err)
+	}
+	defer conn.Close()
 
 	for {
 		m.Timestamp = time.Now().UnixMilli()
@@ -132,7 +151,9 @@ func (m *Monitor) Update(interval time.Duration) {
 		prevBytesSent, prevBytesReceived = m.updateNetwork(prevBytesSent, prevBytesReceived, elapsedTime)
 		startTime = time.Now()
 
-		encoder.Encode(m)
+		if err := m.sendMetrics(conn); err != nil {
+			log.Println("Error sending metrics:", err)
+		}
 
 		time.Sleep(interval)
 	}
@@ -149,8 +170,11 @@ func main() {
 		}
 	}
 
+	vsockCID := uint32(2)
+	vsockPort := uint32(5000)
+
 	monitor := &Monitor{}
-	go monitor.Update(interval)
+	go monitor.Update(interval, vsockCID, vsockPort)
 
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
