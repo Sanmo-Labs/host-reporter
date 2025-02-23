@@ -9,6 +9,7 @@ import (
 	"os/signal"
 	"runtime"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -17,6 +18,16 @@ import (
 	"github.com/shirou/gopsutil/disk"
 	"github.com/shirou/gopsutil/mem"
 	"github.com/shirou/gopsutil/net"
+)
+
+const (
+	vsockCID  = uint32(2)
+	vsockPort = uint32(5000)
+)
+
+var (
+	conn      *vsock.Conn
+	connMutex sync.Mutex
 )
 
 type Monitor struct {
@@ -116,7 +127,14 @@ func (m *Monitor) updateNetwork(prevBytesSent, prevBytesReceived uint64, elapsed
 	return prevBytesSent, prevBytesReceived
 }
 
-func (m *Monitor) sendMetrics(conn *vsock.Conn) error {
+func (m *Monitor) sendMetrics() error {
+	connMutex.Lock()
+	defer connMutex.Unlock()
+
+	if conn == nil {
+		return fmt.Errorf("connection is nil")
+	}
+
 	metricsJSON, err := json.Marshal(m)
 	if err != nil {
 		return err
@@ -130,17 +148,29 @@ func (m *Monitor) sendMetrics(conn *vsock.Conn) error {
 	return nil
 }
 
+func reConnect(vsockCID uint32, vsockPort uint32) {
+	connMutex.Lock()
+	defer connMutex.Unlock()
+
+	if conn != nil {
+		conn.Close()
+	}
+
+	newConn, err := vsock.Dial(vsockCID, vsockPort, nil)
+	if err != nil {
+		log.Printf("Error reconnecting to vsock: %v\n", err)
+		return
+	}
+
+	conn = newConn
+	log.Println("Reconnected to vsock successfully.")
+}
+
 func (m *Monitor) Update(interval time.Duration, vsockCID uint32, vsockPort uint32) {
 	m.fetchInstanceID()
 
 	var prevBytesSent, prevBytesReceived uint64
 	startTime := time.Now()
-
-	conn, err := vsock.Dial(vsockCID, vsockPort, nil)
-	if err != nil {
-		log.Fatalf("Error connecting to vsock: %v", err)
-	}
-	defer conn.Close()
 
 	for {
 		m.Timestamp = time.Now().UnixMilli()
@@ -152,14 +182,15 @@ func (m *Monitor) Update(interval time.Duration, vsockCID uint32, vsockPort uint
 		prevBytesSent, prevBytesReceived = m.updateNetwork(prevBytesSent, prevBytesReceived, elapsedTime)
 		startTime = time.Now()
 
-		fmt.Println("sending metrics...")
+		fmt.Println("Sending metrics...")
 		go func() {
-			if err := m.sendMetrics(conn); err != nil {
+			if err := m.sendMetrics(); err != nil {
 				log.Println("Error sending metrics:", err)
+				reConnect(vsockCID, vsockPort)
 			}
 		}()
 
-		fmt.Println("metrics sent...")
+		fmt.Println("Metrics sent...")
 		time.Sleep(interval)
 	}
 }
@@ -175,8 +206,20 @@ func main() {
 		}
 	}
 
-	vsockCID := uint32(2)
-	vsockPort := uint32(5000)
+	var err error
+
+	conn, err = vsock.Dial(vsockCID, vsockPort, nil)
+	if err != nil {
+		log.Fatalf("Error connecting to vsock: %v", err)
+	}
+
+	defer func() {
+		connMutex.Lock()
+		if conn != nil {
+			conn.Close()
+		}
+		connMutex.Unlock()
+	}()
 
 	monitor := &Monitor{}
 	go monitor.Update(interval, vsockCID, vsockPort)
