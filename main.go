@@ -17,7 +17,8 @@ import (
 )
 
 type Monitor struct {
-	Timestamp int64 `json:"timestamp"`
+	Timestamp  int64  `json:"timestamp"`
+	InstanceID string `json:"instance_id"`
 
 	// Memory Metrics
 	TotalRAM     uint64  `json:"total_ram"`
@@ -39,12 +40,22 @@ type Monitor struct {
 	// Network Metrics
 	BytesSent         uint64  `json:"bytes_sent"`
 	BytesReceived     uint64  `json:"bytes_received"`
-	BandwidthSent     float64 `json:"bandwidth_sent"`     // Bytes per second
-	BandwidthReceived float64 `json:"bandwidth_received"` // Bytes per second
+	BandwidthSent     float64 `json:"bandwidth_sent"`
+	BandwidthReceived float64 `json:"bandwidth_received"`
 }
 
 func round(value float64) float64 {
 	return math.Round(value*100) / 100
+}
+
+func (m *Monitor) fetchInstanceID() {
+	data, err := os.ReadFile("/var/lib/cloud/data/instance-id")
+	if err == nil {
+		m.InstanceID = string(data)
+	} else {
+		log.Println("Error fetching instance ID:", err)
+		m.InstanceID = "unknown"
+	}
 }
 
 func (m *Monitor) updateMemory() {
@@ -60,7 +71,7 @@ func (m *Monitor) updateMemory() {
 }
 
 func (m *Monitor) updateCPU() {
-	cpuPercent, err := cpu.Percent(time.Second, false) // Sample over 1s
+	cpuPercent, err := cpu.Percent(time.Second, false)
 	if err == nil && len(cpuPercent) > 0 {
 		m.CPUUsage = round(cpuPercent[0])
 		totalCPU := float64(runtime.NumCPU())
@@ -104,6 +115,8 @@ func (m *Monitor) updateNetwork(prevBytesSent, prevBytesReceived uint64, elapsed
 }
 
 func (m *Monitor) Update(interval time.Duration) {
+	m.fetchInstanceID()
+
 	var prevBytesSent, prevBytesReceived uint64
 	startTime := time.Now()
 
@@ -126,10 +139,8 @@ func (m *Monitor) Update(interval time.Duration) {
 }
 
 func main() {
-	// Set default interval
 	interval := 10 * time.Second
 
-	// Allow interval to be configured via environment variable
 	if envInterval := os.Getenv("MONITOR_INTERVAL"); envInterval != "" {
 		if parsedInterval, err := time.ParseDuration(envInterval); err == nil {
 			interval = parsedInterval
@@ -138,13 +149,9 @@ func main() {
 		}
 	}
 
-	// Initialize monitor instance
 	monitor := &Monitor{}
-
-	// Start monitoring
 	go monitor.Update(interval)
 
-	// Graceful shutdown
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
 	<-stop
