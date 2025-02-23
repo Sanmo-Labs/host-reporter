@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"runtime"
+	"strings"
 	"syscall"
 	"time"
 
@@ -50,12 +51,11 @@ func round(value float64) float64 {
 
 func (m *Monitor) fetchInstanceID() {
 	data, err := os.ReadFile("/var/lib/cloud/data/instance-id")
-	if err == nil {
-		m.InstanceID = string(data)
-	} else {
-		log.Println("Error fetching instance ID:", err)
-		m.InstanceID = "unknown"
+	if err != nil {
+		os.Exit(1)
 	}
+
+	m.InstanceID = strings.TrimSpace(string(data))
 }
 
 func (m *Monitor) updateMemory() {
