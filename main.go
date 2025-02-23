@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"math"
 	"os"
@@ -151,10 +152,14 @@ func (m *Monitor) Update(interval time.Duration, vsockCID uint32, vsockPort uint
 		prevBytesSent, prevBytesReceived = m.updateNetwork(prevBytesSent, prevBytesReceived, elapsedTime)
 		startTime = time.Now()
 
-		if err := m.sendMetrics(conn); err != nil {
-			log.Println("Error sending metrics:", err)
-		}
+		fmt.Println("sending metrics...")
+		go func() {
+			if err := m.sendMetrics(conn); err != nil {
+				log.Println("Error sending metrics:", err)
+			}
+		}()
 
+		fmt.Println("metrics sent...")
 		time.Sleep(interval)
 	}
 }
